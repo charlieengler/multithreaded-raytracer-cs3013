@@ -1,0 +1,37 @@
+plane {
+	color {
+		rgba {0.3 0.5 0.7 1.0 }
+		reflectance 1.0
+	}
+	pos { 0 -4 0 }
+	normal { 0 1 0 }
+}
+
+sphere {
+	color {
+		rgba { 1.0 0.1 0.1 0.8 }
+		reflectance 0.2
+	}
+	pos { 0 0 10 }
+	velocity { 0 -1 0 }
+	radius 3
+}
+light {
+	color {
+		rgba { 1.0 0.8 0.8 1.0 }
+	}
+	pos { 50 100 0 }
+}
+light {
+	color {
+		rgba { 0.8 1.0 0.8 1.0 }
+	}
+	pos { 0 100 0 }
+}
+light {
+	color {
+		rgba { 0.8 0.8 1.0 1.0 }
+	}
+	pos { 0 100 50 }
+}
+
