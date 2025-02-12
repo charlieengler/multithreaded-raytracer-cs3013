@@ -1,11 +1,11 @@
-
 #include "ray_physics.h"
 #include "ray_math.h"
 
 static const double framerate = 25;
 static const pt3 gravity = {{0, -9.8 / framerate, 0}};
 
-void step_physics(struct context *ctx) {
+// TODO: Comments
+void calc_velocities(struct context *ctx) {
 	// First we loop through all the spheres in the world, collision detect them with everything else,
 	// and modify the velocities _in place_. Note that velocities may be manipulated during the render
 	// phase as they don't affect position until they are applied.
@@ -52,6 +52,7 @@ void step_physics(struct context *ctx) {
 					vi->v[0], vi->v[1], vi->v[2],
 					vj->v[0], vj->v[1], vj->v[2]);
 		}
+
 		for (int j = 0; j < ctx->num_planes; j++) {
 			plane *p = &ctx->planes[j];
 			if (intersect_sphere_plane(si, p)) {
@@ -66,7 +67,9 @@ void step_physics(struct context *ctx) {
 			}
 		}
 	}
+}
 
+void update_positions(struct context *ctx) {
 	// Now that velocities are altered in the previous loop, apply the velocities (and gravity) to everything.
 	// This can't be run in parallel with rendering as it occurs now because the raytracer is dependent on the
 	// positions of each sphere to know how to draw it.
@@ -74,4 +77,3 @@ void step_physics(struct context *ctx) {
 		ctx->spheres[i].position = pt3_addv(ctx->spheres[i].position, pt3_mul(&ctx->spheres[i].velocity, 1.0/24));
 	}
 }
-

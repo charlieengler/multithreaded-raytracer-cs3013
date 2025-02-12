@@ -59,7 +59,8 @@ int main(int argc, char **argv) {
 		// but faster, try lowering the resolution here.                                     //
 		///////////////////////////////////////////////////////////////////////////////////////
 		//fb = new_framebuffer_pt4(2560, 1440);
-		fb = new_framebuffer_pt4(2048, 1536);
+		// fb = new_framebuffer_pt4(2048, 1536);
+		fb = new_framebuffer_pt4(267, 200);
 	} else {
 		struct winsize ws;
 
@@ -88,7 +89,10 @@ int main(int argc, char **argv) {
 
 	for (int frame = 0; frame < 100; frame++) {
 		render_scene(fb, ctx);
-		step_physics(ctx);
+
+		calc_velocities(ctx);
+		update_positions(ctx);
+
 		if (render_to_console) {
 			render_console(fb);
 		} else {
