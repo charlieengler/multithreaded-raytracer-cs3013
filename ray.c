@@ -17,24 +17,33 @@
 #define NUM_FRAME_BUFFERS 2
 
 // TODO: Comments
-#define NUM_RENDER_THREADS 20
+#define NUM_RENDER_THREADS 5
 
 // TODO: Comments
 typedef struct render_args {
-	struct framebuffer_pt4 *fb;
 	struct context *ctx;
-	int index;
-	int xmin, xmax;
+	int rt;
+	int xmin;
+	int xmax;
 } render_args;
 
 // TODO: Free these monstrosities
-sem_t ***fb_ready_mutexes;
-sem_t ***fb_done_mutexes;
+sem_t *render_ready_mutexes;
+sem_t *render_done_mutexes;
+
+sem_t save_mutex;
+sem_t filepath_mutex;
+
+struct framebuffer_pt4 *render_fb;
+struct framebuffer_pt4 *save_fb;
+
+char current_filepath[128];
 
 #define CHECK(x)	do { if (!(x)) { fprintf(stderr, "%s:%d CHECK failed: %s, errno %d %s\n", __FILE__, __LINE__, #x, errno, strerror(errno)); abort(); } } while(0)
 
 // TODO: Comments
 void *render_scene(void *args);
+void *save_scene(void *args);
 
 int main(int argc, char **argv) {
 
@@ -76,10 +85,10 @@ int main(int argc, char **argv) {
 		// HINT: changing the resolutions here will alter the performance. If you want bmps  //
 		// but faster, try lowering the resolution here.                                     //
 		///////////////////////////////////////////////////////////////////////////////////////
-		const int x_res = 267;
-		const int y_res = 200;
-		// const int x_res = 2048;
-		// const int y_res = 1536;
+		// const int x_res = 267;
+		// const int y_res = 200;
+		const int x_res = 2048;
+		const int y_res = 1536;
 
 		for(int i = 0; i < NUM_FRAME_BUFFERS; i++)
 			fbs[i] = new_framebuffer_pt4(x_res, y_res);
@@ -111,76 +120,94 @@ int main(int argc, char **argv) {
 	///////////////////////////////////////////////////////////////////////////////////////
 
 	// TODO: Comments
-	pthread_t render_threads[NUM_RENDER_THREADS];
-
-	fb_ready_mutexes = (sem_t***)malloc(sizeof(sem_t**) * NUM_FRAME_BUFFERS);
-	fb_done_mutexes = (sem_t***)malloc(sizeof(sem_t**) * NUM_FRAME_BUFFERS);
-	for(int i = 0; i < NUM_FRAME_BUFFERS; i++) {
-		sem_t **ready_mutexes = (sem_t**)malloc(sizeof(sem_t*) * NUM_RENDER_THREADS);
-		fb_ready_mutexes[i] = ready_mutexes;
-
-		sem_t **done_mutexes = (sem_t**)malloc(sizeof(sem_t*) * NUM_RENDER_THREADS);
-		fb_done_mutexes[i] = done_mutexes;
-
-		for(int j = 0; j < NUM_RENDER_THREADS; j++) {
-			sem_t *ready_mutex = malloc(sizeof(sem_t));
-			sem_t *done_mutex = malloc(sizeof(sem_t));
-
-			fb_ready_mutexes[i][j] = ready_mutex;
-			fb_done_mutexes[i][j] = done_mutex;
-
-			// TODO: Error checking
-			sem_init(ready_mutex, 0, 0);
-			sem_init(done_mutex, 0, 0);
-		}
-	}
+	// TODO: Free these
+	pthread_t *render_threads = malloc(sizeof(pthread_t) * NUM_RENDER_THREADS);
+	pthread_t file_thread;
 
 	const int x_pixels_per_thread = fbs[0]->width / NUM_RENDER_THREADS;
 
+	render_fb = fbs[1];
+	save_fb = fbs[0];
+
+	sem_init(&filepath_mutex, 0, 1);
+	sem_init(&save_mutex, 0, 0);
+
+	render_ready_mutexes = (sem_t*)malloc(sizeof(sem_t) * NUM_RENDER_THREADS);
+	render_done_mutexes = (sem_t*)malloc(sizeof(sem_t) * NUM_RENDER_THREADS);
 	for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
+		// TODO: Error checking
+		sem_init(&(render_ready_mutexes[rt]), 0, 1);
+		sem_init(&(render_done_mutexes[rt]), 0, 1);
+
 		const int xmin = rt * x_pixels_per_thread;
 		const int xmax = rt + 1 == NUM_RENDER_THREADS ? fbs[0]->width : rt * x_pixels_per_thread + x_pixels_per_thread;
 
 		render_args *r_args = (render_args*)malloc(sizeof(render_args));
-		r_args->fb = fbs[0];
 		r_args->ctx = ctx;
-		r_args->index = rt;
+		r_args->rt = rt;
 		r_args->xmin = xmin;
 		r_args->xmax = xmax;
 
 		int c_err;
-		if((c_err = pthread_create(&render_threads[rt], NULL, &render_scene, (void*)r_args))) {
+		if((c_err = pthread_create(&(render_threads[rt]), NULL, &render_scene, (void*)r_args))) {
 			printf("[ray.c -> main] Unable to create render thread: %d\n", c_err);
 			goto out;
 		}
 	}
 
+	calc_velocities(ctx);
+	update_positions(ctx);
+	
+	for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
+		// TODO: Error checking
+		sem_wait(&(render_done_mutexes[rt]));
+	}
+
 	// TODO: Comments for all of this
-	for (int frame = 0; frame < 100; frame++) {
-		for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
-			// TODO: Error checking
-			sem_post(fb_ready_mutexes[0][rt]);
+	for (int frame = 0; frame < 10; frame++) {
+		if(frame % 2 == 0) {
+			render_fb = fbs[0];
+			save_fb = fbs[1];
+		} else {
+			render_fb = fbs[1];
+			save_fb = fbs[0];
+		}
+
+		if (render_to_console) {
+			render_console(fbs[frame % 2]);
+		} else {
+			snprintf(current_filepath, sizeof(current_filepath)-1, "%s-%05d.bmp", argv[2], frame);
+			
+			int c_err;
+			if((c_err = pthread_create(&file_thread, NULL, &save_scene, NULL))) {
+				printf("[ray.c -> main] Unable to create file thread: %d\n", c_err);
+				goto out;
+			}
 		}
 
 		for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
 			// TODO: Error checking
-			sem_wait(fb_done_mutexes[0][rt]);
+			sem_post(&(render_ready_mutexes[rt]));
 		}
 
 		calc_velocities(ctx);
+
+		for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
+			// TODO: Error checking
+			sem_wait(&(render_done_mutexes[rt]));
+		}
+
 		update_positions(ctx);
 
-		if (render_to_console) {
-			render_console(fbs[0]);
-		} else {
-			char filepath[128];
-			snprintf(filepath, sizeof(filepath)-1, "%s-%05d.bmp", argv[2], frame);
-			CHECK(render_bmp(fbs[0], filepath) == 0);
+		int j_err;
+		if((j_err = pthread_join(file_thread, NULL))) {
+			printf("[ray.c -> main] Unable to join file thread: %d\n", j_err);
+			goto out;
 		}
 	}
 
+	int c_err;
 	for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
-		int c_err;
 		if((c_err = pthread_cancel(render_threads[rt]))) {
 			printf("[ray.c -> main] Unable to cancel render thread: %d\n", c_err);
 			goto out;
@@ -196,32 +223,33 @@ out:
 		if (fbs[i]) free_framebuffer_pt4(fbs[i]);
 	}
 	if (fbs) free(fbs);
+	if (render_ready_mutexes) free(render_ready_mutexes);
+	if (render_done_mutexes) free(render_done_mutexes);
+	if (render_threads) free(render_threads);
 
 	return 0;
 }
 
-
 void *render_scene(void *args) {
 	render_args *r_args = (render_args*)args;
-
-	struct framebuffer_pt4 *fb = r_args->fb;
+	
 	struct context *ctx = r_args->ctx;
 
-	const int xmax = fb->width;
-	const int ymax = fb->height;
+	const int xmax = render_fb->width;
+	const int ymax = render_fb->height;
 
 	const int pix_x_min = r_args->xmin;
 	const int pix_x_max = r_args->xmax;
 	const int pix_y_min = 0;
 	const int pix_y_max = ymax;
 
-	const int index = r_args->index;
-
+	const int rt = r_args->rt;
+	
 	free(r_args);
 
 	while(1) {
 		// TODO: Error checking
-		sem_wait(fb_ready_mutexes[0][index]);
+		sem_wait(&(render_ready_mutexes[rt]));
 
 		double left_right_angle;
 		double up_down_angle;
@@ -252,13 +280,24 @@ void *render_scene(void *args) {
 				//printf("ray: %lf %lf %lf\n", direction.v[0], direction.v[1], direction.v[2]);
 				pt4 px_color = {0};
 				raytrace(ctx, &r, &px_color, 3);
-				framebuffer_pt4_set(fb, x, y, px_color);
+				framebuffer_pt4_set(render_fb, x, y, px_color);
 			}
 		}
 
 		// TODO: Error checking
-		sem_post(fb_done_mutexes[0][index]);
+		sem_post(&(render_done_mutexes[rt]));
 	}
 	
+	return NULL;
+}
+
+void *save_scene(void *args) {
+	char *filepath = malloc(sizeof(current_filepath));
+	strcpy(filepath, current_filepath);
+
+	CHECK(render_bmp(save_fb, filepath) == 0);
+
+	free(filepath);
+
 	return NULL;
 }
