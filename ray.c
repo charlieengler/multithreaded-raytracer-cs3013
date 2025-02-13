@@ -1,3 +1,17 @@
+/*
+Outputs from time command:
+
+	Baseline (100 frames, 2048x1536):
+		real    10m6.024s
+		user    2m37.799s
+		sys     0m10.268s
+
+	Multithreaded Rendering (100 frames, 2048x1536):
+		real    7m22.293s
+		user    3m0.609s
+		sys     0m10.756s
+*/
+
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <errno.h>
@@ -32,7 +46,7 @@ sem_t *render_ready_mutexes;
 sem_t *render_done_mutexes;
 
 sem_t save_mutex;
-sem_t filepath_mutex;
+sem_t buf_swap_mutex;
 
 struct framebuffer_pt4 *render_fb;
 struct framebuffer_pt4 *save_fb;
@@ -127,17 +141,16 @@ int main(int argc, char **argv) {
 	const int x_pixels_per_thread = fbs[0]->width / NUM_RENDER_THREADS;
 
 	render_fb = fbs[1];
-	save_fb = fbs[0];
 
-	sem_init(&filepath_mutex, 0, 1);
 	sem_init(&save_mutex, 0, 0);
+	sem_init(&buf_swap_mutex, 0, 0);
 
 	render_ready_mutexes = (sem_t*)malloc(sizeof(sem_t) * NUM_RENDER_THREADS);
 	render_done_mutexes = (sem_t*)malloc(sizeof(sem_t) * NUM_RENDER_THREADS);
 	for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
 		// TODO: Error checking
-		sem_init(&(render_ready_mutexes[rt]), 0, 1);
-		sem_init(&(render_done_mutexes[rt]), 0, 1);
+		sem_init(&(render_ready_mutexes[rt]), 0, 0);
+		sem_init(&(render_done_mutexes[rt]), 0, 0);
 
 		const int xmin = rt * x_pixels_per_thread;
 		const int xmax = rt + 1 == NUM_RENDER_THREADS ? fbs[0]->width : rt * x_pixels_per_thread + x_pixels_per_thread;
@@ -155,23 +168,37 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
+		// TODO: Error checking
+		sem_post(&(render_done_mutexes[rt]));
+	}
+
 	calc_velocities(ctx);
-	update_positions(ctx);
 	
 	for(int rt = 0; rt < NUM_RENDER_THREADS; rt++) {
 		// TODO: Error checking
 		sem_wait(&(render_done_mutexes[rt]));
 	}
 
+	update_positions(ctx);
+
+	save_fb = render_fb;
+	render_fb = fbs[0];
+
 	// TODO: Comments for all of this
-	for (int frame = 0; frame < 10; frame++) {
+	for (int frame = 0; frame < 100; frame++) {
+		save_fb = render_fb;
+
 		if(frame % 2 == 0) {
 			render_fb = fbs[0];
-			save_fb = fbs[1];
+
+			sem_post(&buf_swap_mutex);
 		} else {
 			render_fb = fbs[1];
-			save_fb = fbs[0];
+
+			sem_post(&buf_swap_mutex);
 		}
+		sem_wait(&buf_swap_mutex);
 
 		if (render_to_console) {
 			render_console(fbs[frame % 2]);
